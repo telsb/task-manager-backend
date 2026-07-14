@@ -607,6 +607,21 @@ app.MapGet("/api/groups/{id}/members", async (HttpContext ctx, AppDbContext db, 
     return Results.Ok(result);
 });
 
+// DELETE /api/groups/{groupId}/members/{userId} — admin removes a member
+app.MapDelete("/api/groups/{groupId}/members/{userId}", async (HttpContext ctx, AppDbContext db, int groupId, int userId) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+    if (caller.Role != "admin") return Results.Forbid();
+
+    var membership = await db.GroupMembers.FirstOrDefaultAsync(m => m.GroupId == groupId && m.UserId == userId);
+    if (membership is null) return Results.NotFound();
+
+    db.GroupMembers.Remove(membership);
+    await db.SaveChangesAsync();
+    return Results.Ok(new { message = "Member removed." });
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  NOTIFICATION ENDPOINTS
 // ══════════════════════════════════════════════════════════════════════════════
