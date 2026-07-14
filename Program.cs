@@ -31,7 +31,8 @@ else
 }
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 30))));
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+
 
 // 2. CORS CONFIGURATION
 // This allows your Vercel frontend to query this backend without security blocks.
