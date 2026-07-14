@@ -81,6 +81,21 @@ app.MapGet("/health", async (AppDbContext db) =>
     }
 });
 
+// Reset endpoint to fix schema issues if model changed
+app.MapGet("/reset-db", async (AppDbContext db) =>
+{
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS Tasks");
+        await db.Database.EnsureCreatedAsync();
+        return Results.Ok("Table recreated successfully with new schema.");
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok($"Error recreating table: {ex.Message}");
+    }
+});
+
 // GET: Fetch all tasks
 app.MapGet("/api/tasks", async (AppDbContext db) =>
     await db.Tasks.OrderByDescending(t => t.CreatedAt).ToListAsync());
