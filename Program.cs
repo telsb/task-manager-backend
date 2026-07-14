@@ -13,10 +13,10 @@ if (!string.IsNullOrEmpty(envString))
 {
     if (envString.StartsWith("mysql://"))
     {
-        var uri = new Uri(envString);
+        var uri = new Uri(envString.Split('?')[0]); // strip query params like ?ssl-mode=REQUIRED
         var userInfo = uri.UserInfo.Split(':');
-        string user = userInfo[0];
-        string password = userInfo.Length > 1 ? userInfo[1] : "";
+        string user = Uri.UnescapeDataString(userInfo[0]);
+        string password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : "";
         connectionString = $"Server={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Uid={user};Pwd={password};SslMode=Required;AllowPublicKeyRetrieval=true;";
     }
     else
@@ -63,6 +63,21 @@ using (var scope = app.Services.CreateScope())
 }
 
 // 3. REST API ENDPOINTS (MINIMAL API)
+
+// Health check endpoint — visit /health in browser to diagnose DB status
+app.MapGet("/health", async (AppDbContext db) =>
+{
+    try
+    {
+        var canConnect = await db.Database.CanConnectAsync();
+        var taskCount = canConnect ? await db.Tasks.CountAsync() : -1;
+        return Results.Ok(new { status = "ok", dbConnected = canConnect, taskCount });
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new { status = "error", error = ex.Message });
+    }
+});
 
 // GET: Fetch all tasks
 app.MapGet("/api/tasks", async (AppDbContext db) =>
