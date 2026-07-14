@@ -46,14 +46,6 @@ using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Database.EnsureCreated(); // Safe — only creates tables that don't exist
-        
-        // Auto-migrate EmployeeId if missing
-        try {
-            db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN EmployeeId VARCHAR(100) NOT NULL DEFAULT '';");
-            Console.WriteLine("✅ Migrated EmployeeId column.");
-        } catch (Exception ex) {
-            Console.WriteLine($"⚠️ Migration skipped: {ex.Message}");
-        }
         Console.WriteLine("✅ Database ready.");
 
         // Seed default admin if no users exist
