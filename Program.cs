@@ -115,6 +115,40 @@ app.MapPost("/api/auth/login", async (AppDbContext db, LoginRequest req) =>
     });
 });
 
+// POST /api/auth/signup
+app.MapPost("/api/auth/signup", async (AppDbContext db, CreateUserRequest req) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.Password))
+        return Results.BadRequest(new { error = "Username and password are required." });
+
+    var normalized = req.Username.Trim().ToLower();
+    if (await db.Users.AnyAsync(u => u.Username == normalized))
+        return Results.Conflict(new { error = "Username already exists." });
+
+    var newUser = new AppUser
+    {
+        Name         = string.IsNullOrWhiteSpace(req.Name) ? req.Username : req.Name.Trim(),
+        Username     = normalized,
+        Email        = req.Email?.Trim() ?? "",
+        PasswordHash = HashPassword(req.Password),
+        Role         = "user", // Hardcode to user, preventing privilege escalation
+        SessionToken = GenerateToken(), // Log them in immediately
+        CreatedAt    = DateTime.UtcNow
+    };
+
+    db.Users.Add(newUser);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/api/users/{newUser.Id}", new
+    {
+        token    = newUser.SessionToken,
+        role     = newUser.Role,
+        name     = newUser.Name,
+        userId   = newUser.Id,
+        username = newUser.Username
+    });
+});
+
 // POST /api/auth/logout
 app.MapPost("/api/auth/logout", async (HttpContext ctx, AppDbContext db) =>
 {
