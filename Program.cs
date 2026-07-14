@@ -187,8 +187,9 @@ app.MapGet("/api/health", async (AppDbContext db) =>
 {
     try {
         var canConnect = await db.Database.CanConnectAsync();
-        var userCount = await db.Users.CountAsync(); // Will throw if table doesn't exist
-        return Results.Ok(new { status = "OK", canConnect, userCount });
+        var userCount = await db.Users.CountAsync();
+        var taskCount = await db.Tasks.CountAsync();
+        return Results.Ok(new { status = "OK", canConnect, userCount, taskCount });
     } catch (Exception ex) {
         return Results.Ok(new { status = "ERROR", message = ex.Message, inner = ex.InnerException?.Message });
     }
