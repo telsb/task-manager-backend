@@ -130,6 +130,7 @@ app.MapPost("/api/auth/signup", async (AppDbContext db, CreateUserRequest req) =
         Name         = string.IsNullOrWhiteSpace(req.Name) ? req.Username : req.Name.Trim(),
         Username     = normalized,
         Email        = req.Email?.Trim() ?? "",
+        EmployeeId   = req.EmployeeId?.Trim() ?? "",
         PasswordHash = HashPassword(req.Password),
         Role         = "user", // Hardcode to user, preventing privilege escalation
         SessionToken = GenerateToken(), // Log them in immediately
@@ -141,11 +142,12 @@ app.MapPost("/api/auth/signup", async (AppDbContext db, CreateUserRequest req) =
 
     return Results.Created($"/api/users/{newUser.Id}", new
     {
-        token    = newUser.SessionToken,
-        role     = newUser.Role,
-        name     = newUser.Name,
-        userId   = newUser.Id,
-        username = newUser.Username
+        token      = newUser.SessionToken,
+        role       = newUser.Role,
+        name       = newUser.Name,
+        userId     = newUser.Id,
+        username   = newUser.Username,
+        employeeId = newUser.EmployeeId
     });
 });
 
@@ -162,7 +164,7 @@ app.MapGet("/api/auth/me", async (HttpContext ctx, AppDbContext db) =>
 {
     var user = await Authenticate(ctx, db);
     if (user is null) return Results.Unauthorized();
-    return Results.Ok(new { userId = user.Id, name = user.Name, username = user.Username, role = user.Role, email = user.Email });
+    return Results.Ok(new { userId = user.Id, name = user.Name, username = user.Username, role = user.Role, email = user.Email, employeeId = user.EmployeeId });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -178,7 +180,7 @@ app.MapGet("/api/users", async (HttpContext ctx, AppDbContext db) =>
 
     var users = await db.Users
         .OrderBy(u => u.Name)
-        .Select(u => new { u.Id, u.Name, u.Username, u.Email, u.Role, u.CreatedAt })
+        .Select(u => new { u.Id, u.Name, u.Username, u.Email, u.Role, u.EmployeeId, u.CreatedAt })
         .ToListAsync();
 
     return Results.Ok(users);
@@ -203,6 +205,7 @@ app.MapPost("/api/users", async (HttpContext ctx, AppDbContext db, CreateUserReq
         Name         = req.Name?.Trim() ?? req.Username,
         Username     = normalized,
         Email        = req.Email?.Trim() ?? "",
+        EmployeeId   = req.EmployeeId?.Trim() ?? "",
         PasswordHash = HashPassword(req.Password),
         Role         = req.Role == "admin" ? "admin" : "user",
         CreatedAt    = DateTime.UtcNow
@@ -210,7 +213,7 @@ app.MapPost("/api/users", async (HttpContext ctx, AppDbContext db, CreateUserReq
 
     db.Users.Add(newUser);
     await db.SaveChangesAsync();
-    return Results.Created($"/api/users/{newUser.Id}", new { newUser.Id, newUser.Name, newUser.Username, newUser.Email, newUser.Role });
+    return Results.Created($"/api/users/{newUser.Id}", new { newUser.Id, newUser.Name, newUser.Username, newUser.Email, newUser.Role, newUser.EmployeeId });
 });
 
 // PUT /api/users/{id} — change password or role
@@ -223,13 +226,14 @@ app.MapPut("/api/users/{id}", async (HttpContext ctx, AppDbContext db, int id, U
     var user = await db.Users.FindAsync(id);
     if (user is null) return Results.NotFound();
 
-    if (!string.IsNullOrWhiteSpace(req.Name))    user.Name  = req.Name.Trim();
-    if (!string.IsNullOrWhiteSpace(req.Email))   user.Email = req.Email.Trim();
-    if (!string.IsNullOrWhiteSpace(req.Password)) user.PasswordHash = HashPassword(req.Password);
-    if (req.Role == "admin" || req.Role == "user") user.Role = req.Role;
+    if (!string.IsNullOrWhiteSpace(req.Name))       user.Name       = req.Name.Trim();
+    if (!string.IsNullOrWhiteSpace(req.Email))      user.Email      = req.Email.Trim();
+    if (req.EmployeeId != null)                      user.EmployeeId = req.EmployeeId.Trim();
+    if (!string.IsNullOrWhiteSpace(req.Password))   user.PasswordHash = HashPassword(req.Password);
+    if (req.Role == "admin" || req.Role == "user")   user.Role       = req.Role;
 
     await db.SaveChangesAsync();
-    return Results.Ok(new { user.Id, user.Name, user.Username, user.Email, user.Role });
+    return Results.Ok(new { user.Id, user.Name, user.Username, user.Email, user.Role, user.EmployeeId });
 });
 
 // DELETE /api/users/{id}
@@ -373,10 +377,13 @@ public class AppUser
     [Required] public string Name { get; set; } = string.Empty;
     [Required] public string Username { get; set; } = string.Empty;
     public string   Email        { get; set; } = string.Empty;
+    public string   EmployeeId   { get; set; } = string.Empty; // Optional employee identifier
     [Required] public string PasswordHash { get; set; } = string.Empty;
     public string   Role         { get; set; } = "user"; // admin | user
     public string?  SessionToken { get; set; }
     public DateTime CreatedAt    { get; set; } = DateTime.UtcNow;
+    // NOTE: After deploying, run this on Aiven if EmployeeId column is missing:
+    // ALTER TABLE AppUser ADD COLUMN EmployeeId VARCHAR(100) NOT NULL DEFAULT '';
 }
 
 public class TaskItem
@@ -409,5 +416,5 @@ public class AppDbContext : DbContext
 
 // ── REQUEST DTOs ──────────────────────────────────────────────────────────────
 public record LoginRequest(string Username, string Password);
-public record CreateUserRequest(string Username, string Password, string? Name, string? Email, string? Role);
-public record UpdateUserRequest(string? Name, string? Email, string? Password, string? Role);
+public record CreateUserRequest(string Username, string Password, string? Name, string? Email, string? Role, string? EmployeeId);
+public record UpdateUserRequest(string? Name, string? Email, string? Password, string? Role, string? EmployeeId);
