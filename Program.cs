@@ -49,10 +49,10 @@ using (var scope = app.Services.CreateScope())
         
         // Auto-migrate EmployeeId if missing
         try {
-            db.Database.ExecuteSqlRaw("ALTER TABLE AppUser ADD COLUMN EmployeeId VARCHAR(100) NOT NULL DEFAULT '';");
+            db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN EmployeeId VARCHAR(100) NOT NULL DEFAULT '';");
             Console.WriteLine("✅ Migrated EmployeeId column.");
-        } catch {
-            // Column likely already exists
+        } catch (Exception ex) {
+            Console.WriteLine($"⚠️ Migration skipped: {ex.Message}");
         }
         Console.WriteLine("✅ Database ready.");
 
@@ -391,7 +391,7 @@ public class AppUser
     public string?  SessionToken { get; set; }
     public DateTime CreatedAt    { get; set; } = DateTime.UtcNow;
     // NOTE: After deploying, run this on Aiven if EmployeeId column is missing:
-    // ALTER TABLE AppUser ADD COLUMN EmployeeId VARCHAR(100) NOT NULL DEFAULT '';
+    // ALTER TABLE Users ADD COLUMN EmployeeId VARCHAR(100) NOT NULL DEFAULT '';
 }
 
 public class TaskItem
