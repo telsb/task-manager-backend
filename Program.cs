@@ -45,6 +45,7 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+app.UseDeveloperExceptionPage();
 app.UseCors("AllowAllOrigins");
 
 // Ensure database and schema are safely initialized on startup
