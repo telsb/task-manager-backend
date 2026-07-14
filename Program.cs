@@ -466,16 +466,14 @@ app.MapGet("/api/groups", async (HttpContext ctx, AppDbContext db) =>
     var caller = await Authenticate(ctx, db);
     if (caller is null) return Results.Unauthorized();
 
-    var memberGroupIds = await db.GroupMembers
-        .Where(m => m.UserId == caller.Id && m.Status == "accepted")
-        .Select(m => m.GroupId)
-        .ToListAsync();
+    var groupsQuery = db.Groups.OrderByDescending(g => g.CreatedAt).AsQueryable();
 
-    IQueryable<Group> query = db.Groups.OrderByDescending(g => g.CreatedAt);
     if (caller.Role != "admin")
-        query = query.Where(g => memberGroupIds.Contains(g.Id));
+    {
+        groupsQuery = groupsQuery.Where(g => db.GroupMembers.Any(m => m.GroupId == g.Id && m.UserId == caller.Id && m.Status == "accepted"));
+    }
 
-    var groups = await query.ToListAsync();
+    var groups = await groupsQuery.ToListAsync();
     var result = new List<object>();
     foreach (var g in groups)
     {
