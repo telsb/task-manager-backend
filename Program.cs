@@ -52,6 +52,7 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.Database.EnsureDeleted(); // FORCE DROP AND RECREATE FOR NEW SCHEMA
         db.Database.EnsureCreated();
         Console.WriteLine("✅ Database connection successful.");
     }
