@@ -194,6 +194,12 @@ app.MapGet("/api/health", async (AppDbContext db) =>
     }
 });
 
+// GET /api/script
+app.MapGet("/api/script", (AppDbContext db) => 
+{
+    return Results.Text(db.Database.GenerateCreateScript(), "text/plain");
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  USER MANAGEMENT (admin only)
 // ══════════════════════════════════════════════════════════════════════════════
