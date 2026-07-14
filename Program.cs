@@ -361,7 +361,21 @@ app.MapGet("/api/tasks", async (HttpContext ctx, AppDbContext db) =>
     if (caller.Role != "admin")
         query = query.Where(t => t.AssignedToUserId == caller.Id);
 
-    return Results.Ok(await query.ToListAsync());
+    var tasks = await query.ToListAsync();
+    
+    // Find the primary admin to use as fallback name for old tasks
+    var primaryAdmin = await db.Users.FirstOrDefaultAsync(u => u.Role == "admin");
+    string adminName = primaryAdmin?.Name ?? "Admin";
+
+    foreach (var t in tasks)
+    {
+        if (string.IsNullOrWhiteSpace(t.CreatedByName) || t.CreatedByName.ToLower() == "admin")
+        {
+            t.CreatedByName = adminName;
+        }
+    }
+
+    return Results.Ok(tasks);
 });
 
 // POST /api/tasks — admin only
