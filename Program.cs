@@ -17,7 +17,7 @@ if (!string.IsNullOrEmpty(envString))
         var userInfo = uri.UserInfo.Split(':');
         string user = userInfo[0];
         string password = userInfo.Length > 1 ? userInfo[1] : "";
-        connectionString = $"Server={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Uid={user};Pwd={password};SslMode=Required;";
+        connectionString = $"Server={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Uid={user};Pwd={password};SslMode=Required;AllowPublicKeyRetrieval=true;";
     }
     else
     {
@@ -49,8 +49,17 @@ app.UseCors("AllowAllOrigins");
 // Ensure database and schema are safely initialized on startup
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    try
+    {
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.Database.EnsureCreated();
+        Console.WriteLine("✅ Database connection successful.");
+    }
+    catch (Exception ex)
+    {
+        // Log but don't crash — the app can still serve requests
+        Console.WriteLine($"⚠️ Database init failed: {ex.Message}");
+    }
 }
 
 // 3. REST API ENDPOINTS (MINIMAL API)
