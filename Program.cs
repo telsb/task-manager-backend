@@ -587,14 +587,14 @@ app.MapPost("/api/groups/{id}/respond", async (HttpContext ctx, AppDbContext db,
     return Results.Ok(new { status = membership.Status });
 });
 
-// GET /api/groups/{id}/members — get accepted members of a group
-app.MapGet("/api/groups/{id}/members", async (HttpContext ctx, AppDbContext db, int id) =>
+// GET /api/groups/{groupId}/members — get accepted members of a group
+app.MapGet("/api/groups/{groupId}/members", async (HttpContext ctx, AppDbContext db, int groupId) =>
 {
     var caller = await Authenticate(ctx, db);
     if (caller is null) return Results.Unauthorized();
 
     var members = await db.GroupMembers
-        .Where(m => m.GroupId == id && m.Status == "accepted")
+        .Where(m => m.GroupId == groupId && m.Status == "accepted")
         .ToListAsync();
 
     var result = new List<object>();
