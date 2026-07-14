@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations;
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. DATABASE CONFIGURATION & ENVIRONMENT PARSING
-// Aiven outputs database URLs as 'mysql://user:pass@host:port/dbname'. 
+// Aiven outputs database URLs as 'mysql://user:pass@host:port/dbname'.
 // This logic translates it into a format that Entity Framework understands.
 string connectionString = "";
 string? envString = Environment.GetEnvironmentVariable("CONNECTION_STRING");
@@ -34,7 +34,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 30))));
 
 // 2. CORS CONFIGURATION
-// This allows your upcoming Vercel frontend to query this backend without security blocks.
+// This allows your Vercel frontend to query this backend without security blocks.
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAllOrigins", policy =>
@@ -56,7 +56,7 @@ using (var scope = app.Services.CreateScope())
 // 3. REST API ENDPOINTS (MINIMAL API)
 
 // GET: Fetch all tasks
-app.MapGet("/api/tasks", async (AppDbContext db) => 
+app.MapGet("/api/tasks", async (AppDbContext db) =>
     await db.Tasks.OrderByDescending(t => t.CreatedAt).ToListAsync());
 
 // POST: Add a new task
@@ -77,6 +77,9 @@ app.MapPut("/api/tasks/{id}", async (AppDbContext db, int id, TaskItem updatedTa
     task.Title = updatedTask.Title;
     task.Description = updatedTask.Description;
     task.IsCompleted = updatedTask.IsCompleted;
+    task.Priority = updatedTask.Priority;
+    task.DueDate = updatedTask.DueDate;
+    task.Category = updatedTask.Category;
 
     await db.SaveChangesAsync();
     return Results.NoContent();
@@ -104,6 +107,11 @@ public class TaskItem
     public string? Description { get; set; }
     public bool IsCompleted { get; set; } = false;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // New fields for enhanced task management
+    public string Priority { get; set; } = "medium";   // low | medium | high | critical
+    public DateTime? DueDate { get; set; }
+    public string Category { get; set; } = "general";  // general | work | personal | shopping | health
 }
 
 public class AppDbContext : DbContext
