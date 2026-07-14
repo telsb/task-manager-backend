@@ -39,6 +39,21 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 app.UseCors("AllowAllOrigins");
 
+// Global exception handler to prevent CORS errors on 500
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        context.Response.StatusCode = 500;
+        context.Response.Headers.Add("Access-Control-Allow-Origin", "*");
+        await context.Response.WriteAsJsonAsync(new { error = ex.Message, stack = ex.StackTrace });
+    }
+});
+
 // ── STARTUP: SAFE SCHEMA INIT + DEFAULT ADMIN SEED ───────────────────────────
 using (var scope = app.Services.CreateScope())
 {
@@ -165,6 +180,18 @@ app.MapGet("/api/auth/me", async (HttpContext ctx, AppDbContext db) =>
     var user = await Authenticate(ctx, db);
     if (user is null) return Results.Unauthorized();
     return Results.Ok(new { userId = user.Id, name = user.Name, username = user.Username, role = user.Role, email = user.Email, employeeId = user.EmployeeId });
+});
+
+// GET /api/health
+app.MapGet("/api/health", async (AppDbContext db) =>
+{
+    try {
+        var canConnect = await db.Database.CanConnectAsync();
+        var userCount = await db.Users.CountAsync(); // Will throw if table doesn't exist
+        return Results.Ok(new { status = "OK", canConnect, userCount });
+    } catch (Exception ex) {
+        return Results.Ok(new { status = "ERROR", message = ex.Message, inner = ex.InnerException?.Message });
+    }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
