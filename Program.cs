@@ -37,6 +37,63 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// Automatically create tables if they don't exist
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    try
+    {
+        string initSql = @"
+CREATE TABLE IF NOT EXISTS `Groups` (
+    `Id` int NOT NULL AUTO_INCREMENT,
+    `Name` varchar(200) NOT NULL,
+    `Description` varchar(500) NULL,
+    `CreatedByUserId` int NOT NULL,
+    `CreatedAt` datetime(6) NOT NULL,
+    CONSTRAINT `PK_Groups` PRIMARY KEY (`Id`)
+) CHARACTER SET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `GroupMembers` (
+    `Id` int NOT NULL AUTO_INCREMENT,
+    `GroupId` int NOT NULL,
+    `UserId` int NOT NULL,
+    `Status` varchar(20) NOT NULL DEFAULT 'pending',
+    `JoinedAt` datetime(6) NULL,
+    CONSTRAINT `PK_GroupMembers` PRIMARY KEY (`Id`)
+) CHARACTER SET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `Notifications` (
+    `Id` int NOT NULL AUTO_INCREMENT,
+    `UserId` int NOT NULL,
+    `Type` varchar(50) NOT NULL,
+    `Title` varchar(200) NOT NULL,
+    `Body` varchar(500) NOT NULL,
+    `Payload` longtext NULL,
+    `IsRead` tinyint(1) NOT NULL DEFAULT 0,
+    `CreatedAt` datetime(6) NOT NULL,
+    CONSTRAINT `PK_Notifications` PRIMARY KEY (`Id`)
+) CHARACTER SET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `ChatMessages` (
+    `Id` int NOT NULL AUTO_INCREMENT,
+    `GroupId` int NOT NULL,
+    `SenderUserId` int NOT NULL,
+    `SenderName` varchar(200) NOT NULL,
+    `Body` longtext NOT NULL,
+    `CreatedAt` datetime(6) NOT NULL,
+    CONSTRAINT `PK_ChatMessages` PRIMARY KEY (`Id`)
+) CHARACTER SET=utf8mb4;
+";
+        db.Database.ExecuteSqlRaw(initSql);
+        Console.WriteLine("Database schema verified/created successfully.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine("Error verifying database schema: " + ex.Message);
+    }
+}
+
 app.UseCors("AllowAllOrigins");
 
 // Global exception handler to prevent CORS errors on 500
