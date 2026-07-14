@@ -399,6 +399,285 @@ app.MapDelete("/api/tasks/{id}", async (HttpContext ctx, AppDbContext db, int id
     return Results.Ok(task);
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  GROUP ENDPOINTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/groups — get groups you are a member of (or all if admin)
+app.MapGet("/api/groups", async (HttpContext ctx, AppDbContext db) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+
+    var memberGroupIds = await db.GroupMembers
+        .Where(m => m.UserId == caller.Id && m.Status == "accepted")
+        .Select(m => m.GroupId)
+        .ToListAsync();
+
+    IQueryable<Group> query = db.Groups.OrderByDescending(g => g.CreatedAt);
+    if (caller.Role != "admin")
+        query = query.Where(g => memberGroupIds.Contains(g.Id));
+
+    var groups = await query.ToListAsync();
+    var result = new List<object>();
+    foreach (var g in groups)
+    {
+        var memberCount = await db.GroupMembers.CountAsync(m => m.GroupId == g.Id && m.Status == "accepted");
+        result.Add(new { g.Id, g.Name, g.Description, g.CreatedByUserId, g.CreatedAt, memberCount });
+    }
+    return Results.Ok(result);
+});
+
+// POST /api/groups — admin creates a group
+app.MapPost("/api/groups", async (HttpContext ctx, AppDbContext db, CreateGroupRequest req) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+    if (caller.Role != "admin") return Results.Forbid();
+
+    var group = new Group
+    {
+        Name = req.Name.Trim(),
+        Description = req.Description?.Trim() ?? "",
+        CreatedByUserId = caller.Id,
+        CreatedAt = DateTime.UtcNow
+    };
+    db.Groups.Add(group);
+    await db.SaveChangesAsync();
+
+    // Auto-add creator as accepted member
+    db.GroupMembers.Add(new GroupMember { GroupId = group.Id, UserId = caller.Id, Status = "accepted", JoinedAt = DateTime.UtcNow });
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/api/groups/{group.Id}", new { group.Id, group.Name, group.Description });
+});
+
+// DELETE /api/groups/{id} — admin deletes a group
+app.MapDelete("/api/groups/{id}", async (HttpContext ctx, AppDbContext db, int id) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+    if (caller.Role != "admin") return Results.Forbid();
+
+    var group = await db.Groups.FindAsync(id);
+    if (group is null) return Results.NotFound();
+
+    var members = db.GroupMembers.Where(m => m.GroupId == id);
+    db.GroupMembers.RemoveRange(members);
+    var messages = db.ChatMessages.Where(m => m.GroupId == id);
+    db.ChatMessages.RemoveRange(messages);
+    db.Groups.Remove(group);
+    await db.SaveChangesAsync();
+    return Results.Ok();
+});
+
+// POST /api/groups/{id}/invite — admin invites users to a group
+app.MapPost("/api/groups/{id}/invite", async (HttpContext ctx, AppDbContext db, int id, InviteRequest req) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+    if (caller.Role != "admin") return Results.Forbid();
+
+    var group = await db.Groups.FindAsync(id);
+    if (group is null) return Results.NotFound();
+
+    foreach (var userId in req.UserIds)
+    {
+        var user = await db.Users.FindAsync(userId);
+        if (user is null) continue;
+
+        var existing = await db.GroupMembers.FirstOrDefaultAsync(m => m.GroupId == id && m.UserId == userId);
+        if (existing is not null) continue; // Already a member or pending
+
+        db.GroupMembers.Add(new GroupMember { GroupId = id, UserId = userId, Status = "pending" });
+
+        // Create notification
+        db.Notifications.Add(new Notification
+        {
+            UserId = userId,
+            Type = "group_invite",
+            Title = $"Group Invitation: {group.Name}",
+            Body = $"{caller.Name} invited you to join the group '{group.Name}'.",
+            Payload = $"{{\"groupId\":{id},\"groupName\":\"{group.Name}\"}}",
+            IsRead = false,
+            CreatedAt = DateTime.UtcNow
+        });
+    }
+    await db.SaveChangesAsync();
+    return Results.Ok(new { message = "Invitations sent." });
+});
+
+// POST /api/groups/{id}/respond — user accepts or declines invitation
+app.MapPost("/api/groups/{id}/respond", async (HttpContext ctx, AppDbContext db, int id, RespondRequest req) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+
+    var membership = await db.GroupMembers.FirstOrDefaultAsync(m => m.GroupId == id && m.UserId == caller.Id);
+    if (membership is null) return Results.NotFound();
+
+    membership.Status = req.Action == "accept" ? "accepted" : "declined";
+    if (req.Action == "accept") membership.JoinedAt = DateTime.UtcNow;
+
+    // Mark related notification as read
+    if (req.NotificationId.HasValue)
+    {
+        var notif = await db.Notifications.FindAsync(req.NotificationId.Value);
+        if (notif is not null) notif.IsRead = true;
+    }
+
+    await db.SaveChangesAsync();
+    return Results.Ok(new { status = membership.Status });
+});
+
+// GET /api/groups/{id}/members — get accepted members of a group
+app.MapGet("/api/groups/{id}/members", async (HttpContext ctx, AppDbContext db, int id) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+
+    var members = await db.GroupMembers
+        .Where(m => m.GroupId == id && m.Status == "accepted")
+        .ToListAsync();
+
+    var result = new List<object>();
+    foreach (var m in members)
+    {
+        var user = await db.Users.FindAsync(m.UserId);
+        if (user is not null)
+            result.Add(new { user.Id, user.Name, user.Username, user.Role, m.Status, m.JoinedAt });
+    }
+    return Results.Ok(result);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  NOTIFICATION ENDPOINTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/notifications
+app.MapGet("/api/notifications", async (HttpContext ctx, AppDbContext db) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+
+    var notifs = await db.Notifications
+        .Where(n => n.UserId == caller.Id)
+        .OrderByDescending(n => n.CreatedAt)
+        .Take(50)
+        .ToListAsync();
+
+    return Results.Ok(notifs);
+});
+
+// POST /api/notifications/{id}/read
+app.MapPost("/api/notifications/{id}/read", async (HttpContext ctx, AppDbContext db, int id) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+
+    var notif = await db.Notifications.FindAsync(id);
+    if (notif is null || notif.UserId != caller.Id) return Results.NotFound();
+    notif.IsRead = true;
+    await db.SaveChangesAsync();
+    return Results.Ok();
+});
+
+// POST /api/notifications/read-all
+app.MapPost("/api/notifications/read-all", async (HttpContext ctx, AppDbContext db) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+
+    var unread = await db.Notifications.Where(n => n.UserId == caller.Id && !n.IsRead).ToListAsync();
+    foreach (var n in unread) n.IsRead = true;
+    await db.SaveChangesAsync();
+    return Results.Ok();
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  BULK TASK ENDPOINT
+// ══════════════════════════════════════════════════════════════════════════════
+
+// POST /api/tasks/bulk — admin sends one task to multiple users
+app.MapPost("/api/tasks/bulk", async (HttpContext ctx, AppDbContext db, BulkTaskRequest req) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+    if (caller.Role != "admin") return Results.Forbid();
+
+    var created = new List<TaskItem>();
+    foreach (var userId in req.UserIds)
+    {
+        var user = await db.Users.FindAsync(userId);
+        if (user is null) continue;
+
+        var task = new TaskItem
+        {
+            Title          = req.Title,
+            Description    = req.Description,
+            Priority       = req.Priority ?? "medium",
+            Category       = req.Category ?? "general",
+            DueDate        = req.DueDate,
+            EnergyLevel    = "medium",
+            AssignedToUserId = userId,
+            AssignedToName = user.Name,
+            CreatedByName  = caller.Name,
+            CreatedAt      = DateTime.UtcNow
+        };
+        db.Tasks.Add(task);
+        created.Add(task);
+    }
+    await db.SaveChangesAsync();
+    return Results.Ok(new { count = created.Count, message = $"{created.Count} task(s) created." });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CHAT ENDPOINTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/chat/{groupId} — get last 100 messages
+app.MapGet("/api/chat/{groupId}", async (HttpContext ctx, AppDbContext db, int groupId) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+
+    // Must be an accepted member
+    var isMember = await db.GroupMembers.AnyAsync(m => m.GroupId == groupId && m.UserId == caller.Id && m.Status == "accepted");
+    if (!isMember && caller.Role != "admin") return Results.Forbid();
+
+    var messages = await db.ChatMessages
+        .Where(m => m.GroupId == groupId)
+        .OrderBy(m => m.CreatedAt)
+        .Take(100)
+        .ToListAsync();
+
+    return Results.Ok(messages);
+});
+
+// POST /api/chat/{groupId} — send a message
+app.MapPost("/api/chat/{groupId}", async (HttpContext ctx, AppDbContext db, int groupId, SendMessageRequest req) =>
+{
+    var caller = await Authenticate(ctx, db);
+    if (caller is null) return Results.Unauthorized();
+
+    var isMember = await db.GroupMembers.AnyAsync(m => m.GroupId == groupId && m.UserId == caller.Id && m.Status == "accepted");
+    if (!isMember && caller.Role != "admin") return Results.Forbid();
+
+    if (string.IsNullOrWhiteSpace(req.Body)) return Results.BadRequest(new { error = "Message cannot be empty." });
+
+    var msg = new ChatMessage
+    {
+        GroupId = groupId,
+        SenderUserId = caller.Id,
+        SenderName = caller.Name,
+        Body = req.Body.Trim(),
+        CreatedAt = DateTime.UtcNow
+    };
+    db.ChatMessages.Add(msg);
+    await db.SaveChangesAsync();
+    return Results.Created($"/api/chat/{groupId}/{msg.Id}", msg);
+});
+
 app.Run();
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -441,14 +720,63 @@ public class TaskItem
     public string CreatedByName     { get; set; } = "Admin";
 }
 
+public class Group
+{
+    public int      Id              { get; set; }
+    [Required] public string Name  { get; set; } = string.Empty;
+    public string   Description     { get; set; } = string.Empty;
+    public int      CreatedByUserId { get; set; }
+    public DateTime CreatedAt       { get; set; } = DateTime.UtcNow;
+}
+
+public class GroupMember
+{
+    public int       Id       { get; set; }
+    public int       GroupId  { get; set; }
+    public int       UserId   { get; set; }
+    public string    Status   { get; set; } = "pending"; // pending | accepted | declined
+    public DateTime? JoinedAt { get; set; }
+}
+
+public class Notification
+{
+    public int      Id        { get; set; }
+    public int      UserId    { get; set; }
+    public string   Type      { get; set; } = string.Empty;
+    public string   Title     { get; set; } = string.Empty;
+    public string   Body      { get; set; } = string.Empty;
+    public string?  Payload   { get; set; }
+    public bool     IsRead    { get; set; } = false;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class ChatMessage
+{
+    public int      Id           { get; set; }
+    public int      GroupId      { get; set; }
+    public int      SenderUserId { get; set; }
+    public string   SenderName   { get; set; } = string.Empty;
+    public string   Body         { get; set; } = string.Empty;
+    public DateTime CreatedAt    { get; set; } = DateTime.UtcNow;
+}
+
 public class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
-    public DbSet<AppUser>  Users => Set<AppUser>();
-    public DbSet<TaskItem> Tasks => Set<TaskItem>();
+    public DbSet<AppUser>     Users         => Set<AppUser>();
+    public DbSet<TaskItem>    Tasks         => Set<TaskItem>();
+    public DbSet<Group>       Groups        => Set<Group>();
+    public DbSet<GroupMember> GroupMembers  => Set<GroupMember>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<ChatMessage> ChatMessages  => Set<ChatMessage>();
 }
 
 // ── REQUEST DTOs ──────────────────────────────────────────────────────────────
 public record LoginRequest(string Username, string Password);
 public record CreateUserRequest(string Username, string Password, string? Name, string? Email, string? Role, string? EmployeeId);
 public record UpdateUserRequest(string? Name, string? Email, string? Password, string? Role, string? EmployeeId);
+public record CreateGroupRequest(string Name, string? Description);
+public record InviteRequest(List<int> UserIds);
+public record RespondRequest(string Action, int? NotificationId);
+public record BulkTaskRequest(string Title, string? Description, string? Priority, string? Category, DateTime? DueDate, List<int> UserIds);
+public record SendMessageRequest(string Body);
