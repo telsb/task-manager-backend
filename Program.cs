@@ -13,10 +13,10 @@ if (!string.IsNullOrEmpty(envString))
 {
     if (envString.StartsWith("mysql://"))
     {
-        var uri = new Uri(envString.Split('?')[0]); // strip query params like ?ssl-mode=REQUIRED
+        var uri = new Uri(envString);
         var userInfo = uri.UserInfo.Split(':');
-        string user = Uri.UnescapeDataString(userInfo[0]);
-        string password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : "";
+        string user = userInfo[0];
+        string password = userInfo.Length > 1 ? userInfo[1] : "";
         connectionString = $"Server={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Uid={user};Pwd={password};SslMode=Required;AllowPublicKeyRetrieval=true;";
     }
     else
@@ -31,8 +31,7 @@ else
 }
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
-
+    options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 30))));
 
 // 2. CORS CONFIGURATION
 // This allows your Vercel frontend to query this backend without security blocks.
@@ -45,7 +44,6 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
-app.UseDeveloperExceptionPage();
 app.UseCors("AllowAllOrigins");
 
 // Ensure database and schema are safely initialized on startup
@@ -65,36 +63,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 // 3. REST API ENDPOINTS (MINIMAL API)
-
-// Health check endpoint — visit /health in browser to diagnose DB status
-app.MapGet("/health", async (AppDbContext db) =>
-{
-    try
-    {
-        var canConnect = await db.Database.CanConnectAsync();
-        var taskCount = canConnect ? await db.Tasks.CountAsync() : -1;
-        return Results.Ok(new { status = "ok", dbConnected = canConnect, taskCount });
-    }
-    catch (Exception ex)
-    {
-        return Results.Ok(new { status = "error", error = ex.Message });
-    }
-});
-
-// Reset endpoint to fix schema issues if model changed
-app.MapGet("/reset-db", async (AppDbContext db) =>
-{
-    try
-    {
-        await db.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS Tasks");
-        await db.Database.EnsureCreatedAsync();
-        return Results.Ok("Table recreated successfully with new schema.");
-    }
-    catch (Exception ex)
-    {
-        return Results.Ok($"Error recreating table: {ex.Message}");
-    }
-});
 
 // GET: Fetch all tasks
 app.MapGet("/api/tasks", async (AppDbContext db) =>
@@ -117,10 +85,31 @@ app.MapPut("/api/tasks/{id}", async (AppDbContext db, int id, TaskItem updatedTa
 
     task.Title = updatedTask.Title;
     task.Description = updatedTask.Description;
+    
+    // If transitioning to completed, set CompletedAt
+    if (!task.IsCompleted && updatedTask.IsCompleted) {
+        task.CompletedAt = DateTime.UtcNow;
+    } else if (task.IsCompleted && !updatedTask.IsCompleted) {
+        task.CompletedAt = null;
+    }
+    
     task.IsCompleted = updatedTask.IsCompleted;
     task.Priority = updatedTask.Priority;
+    
+    // Track rescheduling
+    if (updatedTask.DueDate.HasValue && task.DueDate.HasValue && updatedTask.DueDate.Value > task.DueDate.Value) {
+        task.RescheduleCount += 1;
+    }
     task.DueDate = updatedTask.DueDate;
+    
     task.Category = updatedTask.Category;
+    task.EnergyLevel = updatedTask.EnergyLevel;
+    task.RecurrenceRule = updatedTask.RecurrenceRule;
+    
+    // Allow resetting reschedule count from client
+    if (updatedTask.RescheduleCount == 0) {
+        task.RescheduleCount = 0;
+    }
 
     await db.SaveChangesAsync();
     return Results.NoContent();
@@ -153,6 +142,12 @@ public class TaskItem
     public string Priority { get; set; } = "medium";   // low | medium | high | critical
     public DateTime? DueDate { get; set; }
     public string Category { get; set; } = "general";  // general | work | personal | shopping | health
+    
+    // Additional fields for TaskFlow overhaul
+    public string EnergyLevel { get; set; } = "medium"; // low | medium | high
+    public int RescheduleCount { get; set; } = 0;
+    public DateTime? CompletedAt { get; set; }
+    public string? RecurrenceRule { get; set; }
 }
 
 public class AppDbContext : DbContext
